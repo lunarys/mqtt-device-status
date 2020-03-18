@@ -1,0 +1,15 @@
+[Unit]
+Description=Send device service on MQTT
+After=network.target
+Requires=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 -u /usr/local/bin/mqtt-status.py -f /etc/mqtt-integration/mqtt-status.conf
+Restart=always
+RestartSec=30s
+TimeoutStartSec=120
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target
