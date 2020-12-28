@@ -5,11 +5,12 @@ import sys
 import time
 import signal
 import os
+import psutil
 
 #####################################
 def on_connect(client, userdata, flags, rc):
     if rc == 0:
-        result = client.publish(topic, up, qos, retain)
+        result = client.publish(topic, up, qos, retain is not None and retain == True)
         client.connected_flag = True
         print("[C] Connected OK")
     else:
@@ -21,7 +22,7 @@ def on_disconnect(client, userdata, rc):
 #####################################################
 def signal_handler(sig, frame):
     print("Interrupt or termination received")
-    result = client.publish(topic, down, qos, retain)
+    result = client.publish(topic, down, qos, retain is not None and retain == True)
     client.loop_stop()
     client.disconnect()
     print("Done")
@@ -32,7 +33,7 @@ def signal_handler(sig, frame):
 broker_address="localhost"
 port=1883
 qos=1
-retain = False
+retain = None
 up = "Online"
 down = "Offline"
 crash = "Crash"
@@ -46,6 +47,7 @@ user_set = False
 password_set = False
 
 topic = os.environ.get('MQTT_TOPIC')
+starttime_topic = os.environ.get('MQTT_STARTTIME_TOPIC')
 broker_address = os.getenv('MQTT_BROKER', broker_address)
 port = int(os.getenv('MQTT_PORT', port))
 qos = int(os.getenv('MQTT_QOS', qos))
@@ -54,14 +56,15 @@ password = os.environ.get('MQTT_PASSWORD')
 up = os.getenv('MQTT_UP_MESSAGE', up)
 down = os.getenv('MQTT_DOWN_MESSAGE', down)
 crash = os.getenv('MQTT_CRASH_MESSAGE', crash)
+disable_starttime = os.getenv('MQTT_DISABLE_STARTTIME')
 
-if topic != None:
+if topic is not None:
     topic_set = True
 
-if user != None:
+if user is not None:
     user_set = True
 
-if password != None:
+if password is not None:
     password_set = True
 
 # Parse command line arguments
@@ -96,6 +99,12 @@ for arg in arg_it:
             topic = configParser.get('settings', 'topic')
             topic_set = True
 
+        if configParser.has_option('settings', 'starttime_topic'):
+            starttime_topic = configParser.get('settings', 'starttime_topic')
+
+        if configParser.has_option('settings', 'disable_starttime'):
+            disable_starttime = configParser.getboolean('settings', 'disable_starttime')
+
         if configParser.has_option('settings', 'address'):
             broker_address = configParser.get('settings', 'address')
 
@@ -123,11 +132,17 @@ for arg in arg_it:
         topic = next(arg_it)
         topic_set = True
 
+    elif arg == '-s' or arg == '--starttime-topic':
+        starttime_topic = next(arg_it)
+
     elif arg == '--crash' or arg == '-C':
         crash = next(arg_it)
 
     elif arg == '-r':
         retain = True
+
+    elif arg == '--retain':
+        retain = next(arg_it) == 'true'
 
     elif arg == '-u':
         user = next(arg_it)
@@ -137,8 +152,23 @@ for arg in arg_it:
         password = next(arg_it)
         password_set = True
 
+    elif arg == '--disable-starttime':
+        disable_starttime = True
+
     elif arg == '-h':
-        print("Usage:", sys.argv[0], "[-a <ip>] [-p <port>] [-q <qos>] [-u <user>] [-pw <password>] -t <topic> -U <up-message> -D <down-message> -C <crash-message> [-r(etain flag)]")
+        print("Usage:", sys.argv[0], "\n", """-t <topic> ------------- base topic to publish to
+ -a <host address> ------ mqtt server host
+[-s <starttime-topic> --- topic to publish the starttime to (default: base topic + /starttime)
+[-p <port>] ------------- mqtt server port
+[-q <qos>] -------------- quality of service
+[-u <user>] ------------- user for the mqtt server
+[-pw <password>] -------- password for the mqtt server
+[-U <up-message>] ------- message on start
+[-D <down-message>] ----- message on stop
+[-C <crash-message>] ---- message on crash (testament)
+[-r(etain flag)] -------- retain all messages
+[--retain <true|false>] - set retain policy (default: retain only starttime)
+[--disable-starttime] --- do not send the starttime""")
         exit()
 
     else:
@@ -155,6 +185,9 @@ if not topic_set:
     print("Please set the status topic. Help:", sys.argv[0], "-h")
     exit()
 
+if starttime_topic is None:
+    starttime_topic = topic + "/starttime"
+
 signal.signal(signal.SIGINT, signal_handler)
 signal.signal(signal.SIGTERM, signal_handler)
 
@@ -162,7 +195,7 @@ signal.signal(signal.SIGTERM, signal_handler)
 client = mqtt.Client()
 
 # Set last will
-client.will_set(topic, crash, qos, retain)
+client.will_set(topic, crash, qos, retain is not None and retain == True)
 client.on_connect = on_connect
 client.on_disconnect = on_disconnect
 
@@ -172,6 +205,11 @@ if user_set and password_set:
 
 # Connect to broker
 client.connect(broker_address, port)
+
+# Set start time
+if disable_starttime is None or disable_starttime == False:
+    starttime = int(psutil.boot_time())
+    client.publish(starttime_topic, str(starttime), qos, retain is None or retain == True)
 
 # Loop until interrupt is received
 client.loop_forever()
